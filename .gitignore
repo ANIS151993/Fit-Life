@@ -39,3 +39,24 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Environment files
+.env.local
+.env*.local
+
+# Firebase admin SDK
+*adminsdk*.json
+*.json.key
+
+# Cloudflare
+.wrangler/
+.vercel/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db

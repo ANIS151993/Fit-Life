@@ -1,13 +1,26 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { logFood, subscribeTodaysFoodLogs, getActivePlans, getTodayNutritionTotals } from "@/lib/firestore";
-import { FoodLog, FoodAnalysisResult, DietPlan, WorkoutPlan } from "@/types";
+import { FoodLog, FoodAnalysis, AIGuidance, DietPlan, WorkoutPlan } from "@/types";
+
+interface AnalysisResponse {
+  status: string;
+  success?: boolean;
+  error?: string;
+  userId?: string;
+  mealType?: string;
+  analysis?: FoodAnalysis;
+  ai_guidance?: AIGuidance;
+  analyzed_at?: string;
+  plan_alignment?: { matches_diet: boolean; matches_workout_nutrition: boolean; suggestions: string[]; remaining_today: { calories: number; protein_g: number; carbs_g: number; fat_g: number } };
+}
 import toast from "react-hot-toast";
 import { Camera, Loader2, AlertTriangle, CheckCircle } from "lucide-react";
 import Image from "next/image";
 
-const N8N_FOOD = "https://n8n.marcbd.site/webhook/fitlife/analyze-food";
+const N8N_SUBMIT = "https://n8n.marcbd.site/webhook/fitlife/analyze-food";
+const N8N_POLL = "https://n8n.marcbd.site/webhook/fitlife/food-result";
 
 export default function FoodLogPage() {
   const { user } = useAuth();
@@ -15,9 +28,11 @@ export default function FoodLogPage() {
   const [activeDiet, setActiveDiet] = useState<DietPlan | null>(null);
   const [, setActiveWorkout] = useState<WorkoutPlan | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeStatus, setAnalyzeStatus] = useState("");
   const [mealType, setMealType] = useState<"breakfast" | "lunch" | "dinner" | "snack">("lunch");
   const [preview, setPreview] = useState<string | null>(null);
-  const [result, setResult] = useState<FoodAnalysisResult | null>(null);
+  const [result, setResult] = useState<AnalysisResponse | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -26,21 +41,79 @@ export default function FoodLogPage() {
       setActiveDiet(diet);
       setActiveWorkout(workout);
     });
-    return unsub;
+    return () => {
+      unsub();
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
   }, [user]);
+
+  const pollForResult = useCallback(async (jobId: string) => {
+    let attempts = 0;
+    const maxAttempts = 60; // 5 minutes max (5s * 60)
+
+    if (pollRef.current) clearInterval(pollRef.current);
+
+    pollRef.current = setInterval(async () => {
+      attempts++;
+      if (attempts > maxAttempts) {
+        if (pollRef.current) clearInterval(pollRef.current);
+        setAnalyzing(false);
+        toast.error("Analysis timed out. Please try again.", { id: "analyze" });
+        return;
+      }
+
+      try {
+        const res = await fetch(`${N8N_POLL}?jobId=${encodeURIComponent(jobId)}`);
+        const data = await res.json();
+
+        if (data.status === "done") {
+          if (pollRef.current) clearInterval(pollRef.current);
+          return data;
+        }
+
+        setAnalyzeStatus(`Analyzing with AI... (${attempts * 5}s)`);
+      } catch {
+        // Ignore poll errors, keep trying
+      }
+    }, 5000);
+
+    // Also poll with await for the final result
+    return new Promise<AnalysisResponse>((resolve, reject) => {
+      const check = setInterval(async () => {
+        attempts++;
+        if (attempts > maxAttempts) {
+          clearInterval(check);
+          if (pollRef.current) clearInterval(pollRef.current);
+          reject(new Error("Analysis timed out after 5 minutes"));
+          return;
+        }
+        try {
+          const res = await fetch(`${N8N_POLL}?jobId=${encodeURIComponent(jobId)}`);
+          const data = await res.json();
+          if (data.status === "done") {
+            clearInterval(check);
+            if (pollRef.current) clearInterval(pollRef.current);
+            resolve(data as AnalysisResponse);
+          }
+        } catch {
+          // ignore
+        }
+      }, 5000);
+    });
+  }, []);
 
   const handleImageSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user) return;
 
-    // Preview
     const reader = new FileReader();
     reader.onload = (ev) => setPreview(ev.target?.result as string);
     reader.readAsDataURL(file);
 
-    // Convert to base64
     setAnalyzing(true);
     setResult(null);
+    setAnalyzeStatus("Sending image to AI...");
+
     try {
       const base64 = await new Promise<string>((resolve) => {
         const r = new FileReader();
@@ -51,30 +124,32 @@ export default function FoodLogPage() {
         r.readAsDataURL(file);
       });
 
-      toast.loading("Analyzing your meal with AI... (1-3 min)", { id: "analyze" });
+      const jobId = crypto.randomUUID();
+      toast.loading("Analyzing your meal with AI...", { id: "analyze" });
 
-      // Call n8n directly from browser (bypasses Cloudflare edge 30s timeout)
-      const res = await fetch(N8N_FOOD, {
+      // Submit to n8n (responds immediately)
+      const submitRes = await fetch(N8N_SUBMIT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           imageBase64: base64,
           userId: user.uid,
           mealType,
+          jobId,
         }),
       });
 
-      const rawText = await res.text();
-      let data;
-      try {
-        const parsed = JSON.parse(rawText);
-        data = Array.isArray(parsed) ? parsed[0] : parsed;
-      } catch {
-        throw new Error("Failed to parse AI response");
+      if (!submitRes.ok) {
+        throw new Error("Failed to submit image for analysis");
       }
 
+      setAnalyzeStatus("AI is analyzing your meal... (this takes 1-3 min)");
+
+      // Poll for result
+      const data = await pollForResult(jobId);
+
       if (!data.success && !data.analysis) {
-        throw new Error(data.error || "Analysis failed");
+        throw new Error(data.error || 'Analysis failed');
       }
 
       // Build plan alignment info
@@ -101,11 +176,10 @@ export default function FoodLogPage() {
           suggestions.push("This meal scores low. Consider swapping for healthier alternatives from your diet plan.");
         }
 
-        // Check against foods to avoid
         if (activeDiet.foods_to_avoid?.length) {
-          const foodNames = data.analysis.food_items?.map((f: { name?: string }) => f.name?.toLowerCase()) || [];
+          const foodNames = (data.analysis?.food_items?.map((f: { name?: string }) => f.name?.toLowerCase()).filter(Boolean) as string[]) || [];
           activeDiet.foods_to_avoid.forEach((avoid) => {
-            if (foodNames.some((n: string) => n.includes(avoid.toLowerCase()))) {
+            if (foodNames.some((n) => n.includes(avoid.toLowerCase()))) {
               suggestions.push(`"${avoid}" is on your foods-to-avoid list.`);
             }
           });
@@ -122,15 +196,14 @@ export default function FoodLogPage() {
       const analysisResult = { ...data, plan_alignment: planAlignment };
       setResult(analysisResult);
 
-      // Save to Firestore
       const foodName = data.analysis?.food_items?.[0]?.name || mealType;
       await logFood({
         userId: user.uid,
         date: new Date().toISOString().split("T")[0],
         mealType,
         food_name: foodName,
-        analysis: data.analysis,
-        ai_guidance: data.ai_guidance,
+        analysis: data.analysis!,
+        ai_guidance: data.ai_guidance!,
         logged_at: new Date().toISOString(),
       });
 
@@ -140,8 +213,9 @@ export default function FoodLogPage() {
       toast.error(message, { id: "analyze" });
     } finally {
       setAnalyzing(false);
+      setAnalyzeStatus("");
     }
-  }, [user, mealType, activeDiet]);
+  }, [user, mealType, activeDiet, pollForResult]);
 
   const todayCalories = logs.reduce((s, l) => s + (l.analysis?.totals?.calories || 0), 0);
   const targetCalories = activeDiet?.daily_targets?.calories || 2000;
@@ -150,7 +224,6 @@ export default function FoodLogPage() {
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-gray-900">Log Meal</h1>
 
-      {/* Quick Stats */}
       <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex items-center justify-between">
         <div>
           <p className="text-sm text-gray-500">Today&apos;s calories</p>
@@ -167,7 +240,6 @@ export default function FoodLogPage() {
         </div>
       </div>
 
-      {/* Upload Area */}
       <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 space-y-4">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-2">Meal Type</label>
@@ -190,8 +262,8 @@ export default function FoodLogPage() {
             {analyzing ? (
               <div className="flex flex-col items-center gap-3">
                 <Loader2 className="w-12 h-12 text-green-500 animate-spin" />
-                <p className="text-green-600 font-medium">Analyzing your meal with AI...</p>
-                <p className="text-xs text-gray-400">This may take 1-3 minutes on first analysis</p>
+                <p className="text-green-600 font-medium">{analyzeStatus || "Analyzing..."}</p>
+                <p className="text-xs text-gray-400">The AI model is processing your image on our server</p>
               </div>
             ) : preview ? (
               <div className="flex flex-col items-center gap-3">
@@ -211,10 +283,8 @@ export default function FoodLogPage() {
         </label>
       </div>
 
-      {/* Analysis Result */}
       {result && result.analysis && (
         <div className="space-y-3">
-          {/* AI Guidance */}
           {result.ai_guidance && (
             <div className={`rounded-2xl p-4 border ${
               result.ai_guidance.color === "green" ? "bg-green-50 border-green-200" :
@@ -236,7 +306,6 @@ export default function FoodLogPage() {
             </div>
           )}
 
-          {/* Plan Alignment */}
           {result.plan_alignment && result.plan_alignment.suggestions.length > 0 && (
             <div className="bg-blue-50 rounded-2xl p-4 border border-blue-200">
               <p className="font-medium text-blue-800 mb-2">Plan Alignment Suggestions</p>
@@ -256,7 +325,6 @@ export default function FoodLogPage() {
             </div>
           )}
 
-          {/* Nutrition Breakdown */}
           <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
             <h3 className="font-semibold text-gray-900 mb-3">Nutrition Breakdown</h3>
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -289,7 +357,6 @@ export default function FoodLogPage() {
         </div>
       )}
 
-      {/* Today's Log */}
       {logs.length > 0 && (
         <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
           <h3 className="font-semibold text-gray-900 mb-3">Today&apos;s Meals ({logs.length})</h3>

@@ -1,13 +1,17 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { getLatestWorkoutPlan, saveLinkedPlans } from "@/lib/firestore";
 import { WorkoutPlan, WorkoutDay } from "@/types";
 import toast from "react-hot-toast";
-import { Dumbbell, Clock, Flame, ChevronDown, ChevronUp, Plus, Loader2 } from "lucide-react";
+import { Dumbbell, Clock, Flame, ChevronDown, ChevronUp, Plus, Loader2, Zap } from "lucide-react";
 
-const N8N_WORKOUT = "https://n8n.marcbd.site/webhook/fitlife/generate-workout";
-const N8N_DIET = "https://n8n.marcbd.site/webhook/fitlife/generate-diet";
+const N8N_BASE = "https://n8n.marcbd.site/webhook";
+const N8N_WORKOUT_FAST = `${N8N_BASE}/fitlife/generate-workout-fast`;
+const N8N_WORKOUT_FREE = `${N8N_BASE}/fitlife/generate-workout-free`;
+const N8N_DIET_FAST = `${N8N_BASE}/fitlife/generate-diet-fast`;
+const N8N_DIET_FREE = `${N8N_BASE}/fitlife/generate-diet-free`;
+const N8N_POLL = `${N8N_BASE}/fitlife/food-result`;
 
 export default function WorkoutsPage() {
   const { user } = useAuth();
@@ -17,6 +21,7 @@ export default function WorkoutsPage() {
   const [genStep, setGenStep] = useState("");
   const [expandedDay, setExpandedDay] = useState<number | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const [goals, setGoals] = useState("weight loss and muscle toning");
   const [fitnessLevel, setFitnessLevel] = useState("beginner");
@@ -34,89 +39,124 @@ export default function WorkoutsPage() {
 
   useEffect(() => {
     if (!user) return;
-    getLatestWorkoutPlan(user.uid).then((p) => {
-      setPlan(p);
-      setLoading(false);
-      if (!p) setShowForm(true);
-    });
+    getLatestWorkoutPlan(user.uid).then((p) => { setPlan(p); setLoading(false); if (!p) setShowForm(true); });
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [user]);
 
-  const handleGenerate = async () => {
+  const workoutPayload = useCallback(() => ({
+    userId: user?.uid, goals, fitness_level: fitnessLevel,
+    equipment, days_per_week: daysPerWeek, session_minutes: sessionMinutes,
+    age, injuries: injuries || "none",
+  }), [user, goals, fitnessLevel, equipment, daysPerWeek, sessionMinutes, age, injuries]);
+
+  const dietPayload = useCallback(() => ({
+    userId: user?.uid, name: user?.displayName || "User",
+    age, gender, height_cm: heightCm, current_weight_kg: currentWeight,
+    goal_weight_kg: goalWeight, activity_level: activityLevel,
+    restrictions: restrictions || "none", goals,
+  }), [user, age, gender, heightCm, currentWeight, goalWeight, activityLevel, restrictions, goals]);
+
+  const savePlans = useCallback(async (workoutData: Record<string, unknown>, dietData: Record<string, unknown> | null) => {
+    if (!user) return;
+    const workoutPlan: WorkoutPlan = {
+      userId: user.uid, plan_name: (workoutData.plan_name as string) || goals + " Plan",
+      weekly_schedule: (workoutData.weekly_schedule as []) || [],
+      trainer_notes: (workoutData.trainer_notes as string) || "",
+      nutrition_timing: (workoutData.nutrition_timing as string) || "",
+      recovery_tips: (workoutData.recovery_tips as string) || "",
+      progression_plan: (workoutData.progression_plan as string) || "",
+      source: "standalone", generated_at: new Date().toISOString(),
+    };
+    const dp = dietData && dietData.success ? {
+      userId: user.uid, bmi: (dietData.bmi as number) || 0, bmr: (dietData.bmr as number) || 0, tdee: (dietData.tdee as number) || 0,
+      plan_type: (dietData.plan_type as string) || "balanced",
+      daily_targets: (dietData.daily_targets as { calories: number; protein_g: number; carbs_g: number; fat_g: number; fiber_g: number; water_ml: number }) || { calories: 2000, protein_g: 150, carbs_g: 200, fat_g: 65, fiber_g: 30, water_ml: 2500 },
+      days: (dietData.days as []) || [], nutritionist_notes: (dietData.nutritionist_notes as string) || "",
+      supplements_recommended: (dietData.supplements_recommended as string[]) || [],
+      foods_to_avoid: (dietData.foods_to_avoid as string[]) || [],
+      foods_to_emphasize: (dietData.foods_to_emphasize as string[]) || [],
+      source: "auto_from_workout" as const, generated_at: new Date().toISOString(),
+    } : null;
+    if (dp) await saveLinkedPlans(user.uid, workoutPlan, dp);
+    setPlan(workoutPlan);
+    setShowForm(false);
+  }, [user, goals]);
+
+  // Gemini (Fast) - synchronous
+  const generateFast = useCallback(async () => {
     if (!user) return;
     setGenerating(true);
     try {
-      // Step 1: Generate workout plan directly from n8n
-      setGenStep("Generating workout plan with AI... (3-5 min)");
-      const workoutRes = await fetch(N8N_WORKOUT, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: user.uid, goals, fitness_level: fitnessLevel,
-          equipment, days_per_week: daysPerWeek,
-          session_minutes: sessionMinutes, age, injuries,
-        }),
-      });
-      const workoutRaw = await workoutRes.text();
-      let workoutData;
-      try { const p = JSON.parse(workoutRaw); workoutData = Array.isArray(p) ? p[0] : p; }
-      catch { throw new Error("Failed to parse workout response"); }
-      if (!workoutData.success) throw new Error(workoutData.error || "Workout generation failed");
+      setGenStep("Generating workout with Gemini...");
+      toast.loading("Quick workout plan generating...", { id: "gen" });
+      const wRes = await fetch(N8N_WORKOUT_FAST, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(workoutPayload()) });
+      const wRaw = await wRes.text();
+      let wData: Record<string, unknown>;
+      try { const p = JSON.parse(wRaw); wData = Array.isArray(p) ? p[0] : p; } catch { throw new Error("Failed to parse workout response"); }
+      if (!wData.success) throw new Error((wData.error as string) || "Workout generation failed");
 
-      // Step 2: Generate matching diet plan
-      setGenStep("Generating matching diet plan... (3-5 min)");
-      const dietRes = await fetch(N8N_DIET, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId: user.uid, name: user.displayName || "User",
-          age, gender, height_cm: heightCm,
-          current_weight_kg: currentWeight, goal_weight_kg: goalWeight,
-          activity_level: activityLevel, restrictions: restrictions || "none",
-          goals, workout_context: daysPerWeek + " days/week " + goals + " workout",
-        }),
-      });
-      const dietRaw = await dietRes.text();
-      let dietData;
-      try { const p = JSON.parse(dietRaw); dietData = Array.isArray(p) ? p[0] : p; }
-      catch { throw new Error("Failed to parse diet response"); }
+      setGenStep("Generating matching diet...");
+      const dRes = await fetch(N8N_DIET_FAST, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dietPayload()) });
+      const dRaw = await dRes.text();
+      let dData: Record<string, unknown>;
+      try { const p = JSON.parse(dRaw); dData = Array.isArray(p) ? p[0] : p; } catch { dData = {}; }
 
-      // Step 3: Save both plans
-      setGenStep("Saving plans...");
-      const workoutPlan: WorkoutPlan = {
-        userId: user.uid,
-        plan_name: workoutData.plan_name || goals + " Plan",
-        weekly_schedule: workoutData.weekly_schedule || [],
-        trainer_notes: workoutData.trainer_notes || "",
-        nutrition_timing: workoutData.nutrition_timing || "",
-        recovery_tips: workoutData.recovery_tips || "",
-        progression_plan: workoutData.progression_plan || "",
-        source: "standalone",
-        generated_at: new Date().toISOString(),
-      };
-      const dietPlan = {
-        userId: user.uid,
-        bmi: dietData.bmi || 0, bmr: dietData.bmr || 0, tdee: dietData.tdee || 0,
-        plan_type: dietData.plan_type || "balanced",
-        daily_targets: dietData.daily_targets || { calories: 2000, protein_g: 150, carbs_g: 200, fat_g: 65, fiber_g: 30, water_ml: 2500 },
-        days: dietData.days || [],
-        nutritionist_notes: dietData.nutritionist_notes || "",
-        supplements_recommended: dietData.supplements_recommended || [],
-        foods_to_avoid: dietData.foods_to_avoid || [],
-        foods_to_emphasize: dietData.foods_to_emphasize || [],
-        source: "auto_from_workout" as const,
-        generated_at: new Date().toISOString(),
-      };
-      await saveLinkedPlans(user.uid, workoutPlan, dietPlan);
-      setPlan(workoutPlan);
-      setShowForm(false);
-      toast.success("Workout + diet plan created!");
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Generation failed");
-    } finally {
-      setGenerating(false);
-      setGenStep("");
-    }
-  };
+      await savePlans(wData, dData.success ? dData : null);
+      toast.success("Workout + diet plan created!", { id: "gen" });
+    } catch (err: unknown) { toast.error(err instanceof Error ? err.message : "Failed", { id: "gen" }); }
+    finally { setGenerating(false); setGenStep(""); }
+  }, [user, workoutPayload, dietPayload, savePlans]);
+
+  // Ollama (Free) - async with polling
+  const generateFree = useCallback(async () => {
+    if (!user) return;
+    setGenerating(true);
+    try {
+      const wJobId = crypto.randomUUID();
+      setGenStep("Generating workout with local AI... (3-5 min)");
+      toast.loading("Free workout plan generating (3-5 min)...", { id: "gen" });
+      await fetch(N8N_WORKOUT_FREE, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...workoutPayload(), jobId: wJobId }) });
+
+      const wData = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        let att = 0;
+        const iv = setInterval(async () => {
+          att++;
+          if (att > 90) { clearInterval(iv); reject(new Error("Workout timed out")); return; }
+          try {
+            const r = await fetch(`${N8N_POLL}?jobId=${encodeURIComponent(wJobId)}`);
+            const d = await r.json();
+            if (d.status === "done") { clearInterval(iv); resolve(d); }
+            else setGenStep(`Local AI generating workout... (${att * 5}s)`);
+          } catch { /* ignore */ }
+        }, 5000);
+        pollRef.current = iv;
+      });
+      if (!wData.success) throw new Error((wData.error as string) || "Workout generation failed");
+
+      const dJobId = crypto.randomUUID();
+      setGenStep("Generating matching diet... (3-5 min)");
+      await fetch(N8N_DIET_FREE, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...dietPayload(), jobId: dJobId }) });
+
+      const dData = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        let att = 0;
+        const iv = setInterval(async () => {
+          att++;
+          if (att > 90) { clearInterval(iv); reject(new Error("Diet timed out")); return; }
+          try {
+            const r = await fetch(`${N8N_POLL}?jobId=${encodeURIComponent(dJobId)}`);
+            const d = await r.json();
+            if (d.status === "done") { clearInterval(iv); resolve(d); }
+            else setGenStep(`Local AI generating diet... (${att * 5}s)`);
+          } catch { /* ignore */ }
+        }, 5000);
+        pollRef.current = iv;
+      });
+
+      await savePlans(wData, dData.success ? dData : null);
+      toast.success("Workout + diet plan created!", { id: "gen" });
+    } catch (err: unknown) { toast.error(err instanceof Error ? err.message : "Failed", { id: "gen" }); }
+    finally { setGenerating(false); setGenStep(""); }
+  }, [user, workoutPayload, dietPayload, savePlans]);
 
   if (loading) return <div className="flex items-center justify-center h-64"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-600" /></div>;
 
@@ -130,7 +170,7 @@ export default function WorkoutsPage() {
       {showForm && (
         <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 space-y-4">
           <h2 className="font-semibold text-gray-900 text-lg">Create Workout Plan</h2>
-          <p className="text-sm text-gray-500">A matching diet plan will be auto-generated. Takes ~8-10 min total.</p>
+          <p className="text-sm text-gray-500">A matching diet plan will be auto-generated.</p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div><label className="block text-sm font-medium text-gray-700 mb-1">Fitness Goals</label><input value={goals} onChange={(e) => setGoals(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-gray-900 focus:ring-2 focus:ring-green-500 focus:outline-none" /></div>
             <div><label className="block text-sm font-medium text-gray-700 mb-1">Fitness Level</label><select value={fitnessLevel} onChange={(e) => setFitnessLevel(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-gray-900 focus:ring-2 focus:ring-green-500 focus:outline-none"><option value="beginner">Beginner</option><option value="intermediate">Intermediate</option><option value="advanced">Advanced</option></select></div>
@@ -146,9 +186,22 @@ export default function WorkoutsPage() {
             <div><label className="block text-sm font-medium text-gray-700 mb-1">Restrictions</label><input value={restrictions} onChange={(e) => setRestrictions(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-gray-900 focus:ring-2 focus:ring-green-500 focus:outline-none" placeholder="e.g. vegetarian" /></div>
           </div>
           <div><label className="block text-sm font-medium text-gray-700 mb-1">Injuries</label><input value={injuries} onChange={(e) => setInjuries(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-gray-900 focus:ring-2 focus:ring-green-500 focus:outline-none" placeholder="e.g. bad knee" /></div>
-          <button onClick={handleGenerate} disabled={generating} className="w-full py-3 bg-green-600 text-white rounded-xl font-semibold hover:bg-green-700 disabled:opacity-50 flex items-center justify-center gap-2">
-            {generating ? <><Loader2 className="w-5 h-5 animate-spin" /> {genStep}</> : <><Dumbbell className="w-5 h-5" /> Generate Workout + Diet Plan</>}
-          </button>
+          {!generating && (
+            <div className="grid grid-cols-2 gap-3">
+              <button onClick={generateFast} className="py-4 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-2xl font-semibold hover:from-purple-700 hover:to-blue-700 transition-all flex flex-col items-center gap-1 shadow-lg">
+                <Zap className="w-6 h-6" /><span>Quick Plan</span><span className="text-xs opacity-80">Gemini AI ~ 30s</span>
+              </button>
+              <button onClick={generateFree} className="py-4 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-2xl font-semibold hover:from-green-700 hover:to-emerald-700 transition-all flex flex-col items-center gap-1 shadow-lg">
+                <Clock className="w-6 h-6" /><span>Free Plan</span><span className="text-xs opacity-80">Local AI ~ 5-10 min</span>
+              </button>
+            </div>
+          )}
+          {generating && (
+            <div className="py-4 bg-gray-100 rounded-2xl flex items-center justify-center gap-3">
+              <Loader2 className="w-5 h-5 animate-spin text-green-600" />
+              <span className="text-gray-700 font-medium">{genStep}</span>
+            </div>
+          )}
         </div>
       )}
 
@@ -169,7 +222,7 @@ export default function WorkoutsPage() {
                     <p className="font-medium text-gray-900">{day.workout_type || (day.is_rest_day ? "Rest Day" : "Workout")}</p>
                     <div className="flex items-center gap-3 text-xs text-gray-400">
                       {!day.is_rest_day && <><Clock className="w-3 h-3" /> {day.duration_min} min</>}
-                      {!day.is_rest_day && day.exercises && <><Flame className="w-3 h-3" /> {day.exercises.reduce((s, e) => s + (e.calories_burned_approx || 0), 0)} cal</>}
+                      {!day.is_rest_day && day.exercises && <><Flame className="w-3 h-3" /> {day.exercises.reduce((s: number, e: { calories_burned_approx?: number }) => s + (e.calories_burned_approx || 0), 0)} cal</>}
                     </div>
                   </div>
                 </div>
@@ -177,7 +230,7 @@ export default function WorkoutsPage() {
               </button>
               {expandedDay === day.day && !day.is_rest_day && (
                 <div className="px-6 pb-4 space-y-3">
-                  {day.warmup && day.warmup.length > 0 && <div><p className="text-xs font-semibold text-gray-400 uppercase mb-1">Warmup</p>{day.warmup.map((w, i) => <p key={i} className="text-sm text-gray-600">{w.exercise} - {w.duration_sec}s</p>)}</div>}
+                  {day.warmup && day.warmup.length > 0 && <div><p className="text-xs font-semibold text-gray-400 uppercase mb-1">Warmup</p>{day.warmup.map((w: {exercise:string;duration_sec:number}, i: number) => <p key={i} className="text-sm text-gray-600">{w.exercise} - {w.duration_sec}s</p>)}</div>}
                   {day.exercises && day.exercises.map((ex, i) => (
                     <div key={i} className="p-3 bg-gray-50 rounded-xl">
                       <div className="flex items-center justify-between mb-1"><p className="font-medium text-gray-900">{ex.name}</p><span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">{ex.muscle_group}</span></div>
@@ -185,7 +238,7 @@ export default function WorkoutsPage() {
                       {ex.form_tips && <p className="text-xs text-gray-400 mt-1">{ex.form_tips}</p>}
                     </div>
                   ))}
-                  {day.cooldown && day.cooldown.length > 0 && <div><p className="text-xs font-semibold text-gray-400 uppercase mb-1">Cooldown</p>{day.cooldown.map((c, i) => <p key={i} className="text-sm text-gray-600">{c.stretch} - {c.duration_sec}s</p>)}</div>}
+                  {day.cooldown && day.cooldown.length > 0 && <div><p className="text-xs font-semibold text-gray-400 uppercase mb-1">Cooldown</p>{day.cooldown.map((c: {stretch:string;duration_sec:number}, i: number) => <p key={i} className="text-sm text-gray-600">{c.stretch} - {c.duration_sec}s</p>)}</div>}
                   {day.day_notes && <p className="text-xs text-gray-400 italic">{day.day_notes}</p>}
                 </div>
               )}

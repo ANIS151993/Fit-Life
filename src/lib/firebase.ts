@@ -1,26 +1,21 @@
-import { initializeApp, getApps, type FirebaseApp } from "firebase/app";
-import { getAuth, type Auth } from "firebase/auth";
-import { getFirestore, type Firestore } from "firebase/firestore";
-import { getStorage, type FirebaseStorage } from "firebase/storage";
+import { initializeApp, getApps } from "firebase/app";
+import { getAuth } from "firebase/auth";
+import { getFirestore } from "firebase/firestore";
+import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
-  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
-  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
-  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
-  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
-  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
-  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID,
+  apiKey: "AIzaSyAkMhUi_1O6Y8qK3kYTH7HdlHLbv1ocj34",
+  authDomain: "fitlife-4323e.firebaseapp.com",
+  projectId: "fitlife-4323e",
+  storageBucket: "fitlife-4323e.firebasestorage.app",
+  messagingSenderId: "556953928361",
+  appId: "1:556953928361:web:aaa65b1811ff02dab75fb8",
+  measurementId: "G-YN15ZFB5PV",
 };
 
-function getApp(): FirebaseApp | undefined {
-  if (!firebaseConfig.apiKey) return undefined;
-  return getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-}
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 
-const app = getApp();
-
-export const auth = app ? getAuth(app) : (undefined as unknown as Auth);
-export const db = app ? getFirestore(app) : (undefined as unknown as Firestore);
-export const storage = app ? getStorage(app) : (undefined as unknown as FirebaseStorage);
+export const auth = getAuth(app);
+export const db = getFirestore(app);
+export const storage = getStorage(app);
 export default app;

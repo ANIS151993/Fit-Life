@@ -82,24 +82,48 @@ export default function WorkoutsPage() {
     setShowForm(false);
   }, [user, goals]);
 
-  // Gemini (Fast) - synchronous
+  // Gemini (Fast) - async with polling
   const generateFast = useCallback(async () => {
     if (!user) return;
     setGenerating(true);
     try {
-      setGenStep("Generating workout with Gemini...");
+      const wJobId = crypto.randomUUID();
+      setGenStep("Generating workout with Gemini... (~30s)");
       toast.loading("Quick workout plan generating...", { id: "gen" });
-      const wRes = await fetch(N8N_WORKOUT_FAST, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(workoutPayload()) });
-      const wRaw = await wRes.text();
-      let wData: Record<string, unknown>;
-      try { const p = JSON.parse(wRaw); wData = Array.isArray(p) ? p[0] : p; } catch { throw new Error("Failed to parse workout response"); }
+      await fetch(N8N_WORKOUT_FAST, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...workoutPayload(), jobId: wJobId }) });
+      const wData = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        let att = 0;
+        const iv = setInterval(async () => {
+          att++;
+          if (att > 60) { clearInterval(iv); reject(new Error("Workout timed out")); return; }
+          try {
+            const r = await fetch(`${N8N_POLL}?jobId=${encodeURIComponent(wJobId)}`);
+            const d = await r.json();
+            if (d.status === "done") { clearInterval(iv); resolve(d); }
+            else setGenStep(`Gemini generating workout... (${att * 3}s)`);
+          } catch { /* ignore */ }
+        }, 3000);
+        pollRef.current = iv;
+      });
       if (!wData.success) throw new Error((wData.error as string) || "Workout generation failed");
 
       setGenStep("Generating matching diet...");
-      const dRes = await fetch(N8N_DIET_FAST, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dietPayload()) });
-      const dRaw = await dRes.text();
-      let dData: Record<string, unknown>;
-      try { const p = JSON.parse(dRaw); dData = Array.isArray(p) ? p[0] : p; } catch { dData = {}; }
+      const dJobId = crypto.randomUUID();
+      await fetch(N8N_DIET_FAST, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...dietPayload(), jobId: dJobId }) });
+      const dData = await new Promise<Record<string, unknown>>((resolve, reject) => {
+        let att = 0;
+        const iv = setInterval(async () => {
+          att++;
+          if (att > 60) { clearInterval(iv); reject(new Error("Diet timed out")); return; }
+          try {
+            const r = await fetch(`${N8N_POLL}?jobId=${encodeURIComponent(dJobId)}`);
+            const d = await r.json();
+            if (d.status === "done") { clearInterval(iv); resolve(d); }
+            else setGenStep(`Gemini generating diet... (${att * 3}s)`);
+          } catch { /* ignore */ }
+        }, 3000);
+        pollRef.current = iv;
+      });
 
       await savePlans(wData, dData.success ? dData : null);
       toast.success("Workout + diet plan created!", { id: "gen" });

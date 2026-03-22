@@ -111,18 +111,31 @@ export default function FoodLogPage() {
     setAnalyzing(true);
     setResult(null);
     setAnalyzeStatus("Analyzing with Gemini AI...");
-    toast.loading("Quick analysis in progress...", { id: "analyze" });
+    toast.loading("Quick analysis in progress (~10-20s)...", { id: "analyze" });
     try {
-      const res = await fetch(N8N_FOOD_FAST, {
+      const jobId = crypto.randomUUID();
+      const submitRes = await fetch(N8N_FOOD_FAST, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageBase64: base64Image, userId: user.uid, mealType }),
+        body: JSON.stringify({ imageBase64: base64Image, userId: user.uid, mealType, jobId }),
       });
-      const raw = await res.text();
-      let data: AnalysisResponse;
-      try { const parsed = JSON.parse(raw); data = Array.isArray(parsed) ? parsed[0] : parsed; }
-      catch { throw new Error("Failed to parse response"); }
-      if (!data.success) throw new Error(data.error || "Analysis failed");
+      if (!submitRes.ok) throw new Error("Failed to submit image");
+      setAnalyzeStatus("Gemini AI analyzing... (~10-20s)");
+      const data = await new Promise<AnalysisResponse>((resolve, reject) => {
+        let attempts = 0;
+        const interval = setInterval(async () => {
+          attempts++;
+          if (attempts > 40) { clearInterval(interval); reject(new Error("Analysis timed out")); return; }
+          try {
+            const res = await fetch(`${N8N_POLL}?jobId=${encodeURIComponent(jobId)}`);
+            const d = await res.json();
+            if (d.status === "done") { clearInterval(interval); resolve(d as AnalysisResponse); }
+            else setAnalyzeStatus(`Gemini analyzing... (${attempts * 3}s)`);
+          } catch { /* ignore */ }
+        }, 3000);
+        pollRef.current = interval;
+      });
+      if (!data.success && !data.analysis) throw new Error(data.error || "Analysis failed");
       await saveAndFinish(data);
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Analysis failed", { id: "analyze" });

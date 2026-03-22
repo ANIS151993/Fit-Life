@@ -1,4 +1,3 @@
-export const runtime = "edge";
 import { NextRequest, NextResponse } from "next/server";
 
 const WEBHOOK_SECRET = "fitlife_webhook_secret_2024";
@@ -13,10 +12,9 @@ const headers = {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { mode } = body; // "workout_first" or "diet_first"
+    const { mode } = body;
 
     if (mode === "workout_first") {
-      // 1. Generate workout plan
       const workoutRes = await fetch(WORKOUT_WEBHOOK, {
         method: "POST",
         headers,
@@ -30,12 +28,15 @@ export async function POST(req: NextRequest) {
           age: body.age,
           injuries: body.injuries || "",
         }),
-        signal: AbortSignal.timeout(120000),
       });
-      if (!workoutRes.ok) throw new Error(`Workout generation failed: ${workoutRes.status}`);
-      const workoutData = await workoutRes.json();
+      if (!workoutRes.ok) throw new Error("Workout generation failed: " + workoutRes.status);
+      const workoutRaw = await workoutRes.text();
+      let workoutData;
+      try {
+        const parsed = JSON.parse(workoutRaw);
+        workoutData = Array.isArray(parsed) ? parsed[0] : parsed;
+      } catch { workoutData = { success: false }; }
 
-      // 2. Auto-generate matching diet plan based on workout
       const dietRes = await fetch(DIET_WEBHOOK, {
         method: "POST",
         headers,
@@ -50,13 +51,16 @@ export async function POST(req: NextRequest) {
           activity_level: body.activity_level,
           restrictions: body.restrictions || "none",
           goals: body.goals,
-          medical_notes: body.medical_notes || "",
-          workout_context: `User has a ${body.days_per_week}-day/week workout plan focused on ${body.goals}. Diet should support muscle recovery and energy for ${body.session_minutes}-minute sessions. Fitness level: ${body.fitness_level}.`,
+          workout_context: body.days_per_week + " days/week " + body.goals + " workout, " + body.session_minutes + "min sessions",
         }),
-        signal: AbortSignal.timeout(120000),
       });
-      if (!dietRes.ok) throw new Error(`Diet generation failed: ${dietRes.status}`);
-      const dietData = await dietRes.json();
+      if (!dietRes.ok) throw new Error("Diet generation failed: " + dietRes.status);
+      const dietRaw = await dietRes.text();
+      let dietData;
+      try {
+        const parsed = JSON.parse(dietRaw);
+        dietData = Array.isArray(parsed) ? parsed[0] : parsed;
+      } catch { dietData = { success: false }; }
 
       return NextResponse.json({
         success: true,
@@ -65,7 +69,6 @@ export async function POST(req: NextRequest) {
       });
 
     } else if (mode === "diet_first") {
-      // 1. Generate diet plan
       const dietRes = await fetch(DIET_WEBHOOK, {
         method: "POST",
         headers,
@@ -80,14 +83,16 @@ export async function POST(req: NextRequest) {
           activity_level: body.activity_level,
           restrictions: body.restrictions || "none",
           goals: body.goals,
-          medical_notes: body.medical_notes || "",
         }),
-        signal: AbortSignal.timeout(120000),
       });
-      if (!dietRes.ok) throw new Error(`Diet generation failed: ${dietRes.status}`);
-      const dietData = await dietRes.json();
+      if (!dietRes.ok) throw new Error("Diet generation failed: " + dietRes.status);
+      const dietRaw = await dietRes.text();
+      let dietData;
+      try {
+        const parsed = JSON.parse(dietRaw);
+        dietData = Array.isArray(parsed) ? parsed[0] : parsed;
+      } catch { dietData = { success: false }; }
 
-      // 2. Auto-generate matching workout
       const workoutRes = await fetch(WORKOUT_WEBHOOK, {
         method: "POST",
         headers,
@@ -99,13 +104,16 @@ export async function POST(req: NextRequest) {
           days_per_week: body.days_per_week || 4,
           session_minutes: body.session_minutes || 45,
           age: body.age,
-          injuries: body.injuries || "",
-          diet_context: `User is on a ${body.goals} diet plan targeting ${body.goal_weight_kg}kg. Activity level: ${body.activity_level}. Workout should complement the nutrition plan.`,
+          diet_context: body.goals + " diet targeting " + body.goal_weight_kg + "kg",
         }),
-        signal: AbortSignal.timeout(120000),
       });
-      if (!workoutRes.ok) throw new Error(`Workout generation failed: ${workoutRes.status}`);
-      const workoutData = await workoutRes.json();
+      if (!workoutRes.ok) throw new Error("Workout generation failed: " + workoutRes.status);
+      const workoutRaw = await workoutRes.text();
+      let workoutData;
+      try {
+        const parsed = JSON.parse(workoutRaw);
+        workoutData = Array.isArray(parsed) ? parsed[0] : parsed;
+      } catch { workoutData = { success: false }; }
 
       return NextResponse.json({
         success: true,

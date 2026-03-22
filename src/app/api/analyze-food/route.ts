@@ -1,4 +1,3 @@
-export const runtime = "edge";
 import { NextRequest, NextResponse } from "next/server";
 
 const FOOD_WEBHOOK = "https://n8n.marcbd.site/webhook/fitlife/analyze-food";
@@ -17,7 +16,6 @@ export async function POST(req: NextRequest) {
         "x-webhook-secret": WEBHOOK_SECRET,
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(60000),
     });
     if (!response.ok) throw new Error("n8n returned " + response.status);
     const data = await response.json();

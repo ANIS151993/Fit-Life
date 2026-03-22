@@ -1,4 +1,3 @@
-export const runtime = "edge";
 import { NextRequest, NextResponse } from "next/server";
 
 const DIET_WEBHOOK = "https://n8n.marcbd.site/webhook/fitlife/generate-diet";
@@ -11,7 +10,6 @@ export async function POST(req: NextRequest) {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-webhook-secret": WEBHOOK_SECRET },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(120000),
     });
     if (!response.ok) throw new Error("n8n returned " + response.status);
     const data = await response.json();

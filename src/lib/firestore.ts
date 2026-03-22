@@ -1,33 +1,15 @@
 import {
-  doc,
-  setDoc,
-  getDoc,
-  updateDoc,
-  collection,
-  addDoc,
-  query,
-  where,
-  orderBy,
-  limit,
-  onSnapshot,
-  getDocs,
+  doc, setDoc, getDoc, updateDoc,
+  collection, addDoc, query, where,
+  orderBy, limit, onSnapshot, getDocs,
 } from "firebase/firestore";
 import { db } from "./firebase";
-import type {
-  UserProfile,
-  FoodLog,
-  DietPlan,
-  WorkoutPlan,
-} from "@/types";
+import type { UserProfile, FoodLog, DietPlan, WorkoutPlan } from "@/types";
 
 // User Profile
-export async function createUserProfile(
-  uid: string,
-  data: Partial<UserProfile>
-) {
+export async function createUserProfile(uid: string, data: Partial<UserProfile>) {
   await setDoc(doc(db, "users", uid, "profile", "data"), {
-    ...data,
-    uid,
+    ...data, uid,
     onboarding_complete: false,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -39,21 +21,16 @@ export async function getUserProfile(uid: string) {
   return snap.exists() ? (snap.data() as UserProfile) : null;
 }
 
-export async function updateUserProfile(
-  uid: string,
-  data: Partial<UserProfile>
-) {
+export async function updateUserProfile(uid: string, data: Partial<UserProfile>) {
   await updateDoc(doc(db, "users", uid, "profile", "data"), {
-    ...data,
-    updated_at: new Date().toISOString(),
+    ...data, updated_at: new Date().toISOString(),
   });
 }
 
 // Food Logs
 export async function logFood(log: FoodLog) {
   const ref = await addDoc(collection(db, "users", log.userId, "food_logs"), {
-    ...log,
-    logged_at: new Date().toISOString(),
+    ...log, logged_at: new Date().toISOString(),
   });
   return ref.id;
 }
@@ -69,10 +46,7 @@ export async function getTodaysFoodLogs(uid: string) {
   return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as FoodLog);
 }
 
-export function subscribeTodaysFoodLogs(
-  uid: string,
-  callback: (logs: FoodLog[]) => void
-) {
+export function subscribeTodaysFoodLogs(uid: string, callback: (logs: FoodLog[]) => void) {
   const today = new Date().toISOString().split("T")[0];
   const q = query(
     collection(db, "users", uid, "food_logs"),
@@ -87,8 +61,7 @@ export function subscribeTodaysFoodLogs(
 // Diet Plans
 export async function saveDietPlan(uid: string, plan: DietPlan) {
   const ref = await addDoc(collection(db, "users", uid, "diet_plans"), {
-    ...plan,
-    generated_at: new Date().toISOString(),
+    ...plan, generated_at: new Date().toISOString(),
   });
   return ref.id;
 }
@@ -96,8 +69,7 @@ export async function saveDietPlan(uid: string, plan: DietPlan) {
 export async function getLatestDietPlan(uid: string) {
   const q = query(
     collection(db, "users", uid, "diet_plans"),
-    orderBy("generated_at", "desc"),
-    limit(1)
+    orderBy("generated_at", "desc"), limit(1)
   );
   const snap = await getDocs(q);
   if (snap.empty) return null;
@@ -107,8 +79,7 @@ export async function getLatestDietPlan(uid: string) {
 // Workout Plans
 export async function saveWorkoutPlan(uid: string, plan: WorkoutPlan) {
   const ref = await addDoc(collection(db, "users", uid, "workout_plans"), {
-    ...plan,
-    generated_at: new Date().toISOString(),
+    ...plan, generated_at: new Date().toISOString(),
   });
   return ref.id;
 }
@@ -116,12 +87,53 @@ export async function saveWorkoutPlan(uid: string, plan: WorkoutPlan) {
 export async function getLatestWorkoutPlan(uid: string) {
   const q = query(
     collection(db, "users", uid, "workout_plans"),
-    orderBy("generated_at", "desc"),
-    limit(1)
+    orderBy("generated_at", "desc"), limit(1)
   );
   const snap = await getDocs(q);
   if (snap.empty) return null;
   return { id: snap.docs[0].id, ...snap.docs[0].data() } as WorkoutPlan;
+}
+
+// Save linked plans (workout + auto-generated diet, or vice versa)
+export async function saveLinkedPlans(
+  uid: string,
+  workoutPlan: WorkoutPlan,
+  dietPlan: DietPlan
+) {
+  const workoutId = await saveWorkoutPlan(uid, workoutPlan);
+  const dietId = await saveDietPlan(uid, {
+    ...dietPlan,
+    linked_workout_plan_id: workoutId,
+  });
+  // Update workout with linked diet ID
+  await updateDoc(doc(db, "users", uid, "workout_plans", workoutId), {
+    linked_diet_plan_id: dietId,
+  });
+  return { workoutId, dietId };
+}
+
+// Get active plans (latest of each)
+export async function getActivePlans(uid: string) {
+  const [diet, workout] = await Promise.all([
+    getLatestDietPlan(uid),
+    getLatestWorkoutPlan(uid),
+  ]);
+  return { diet, workout };
+}
+
+// Get today's nutrition totals from food logs
+export async function getTodayNutritionTotals(uid: string) {
+  const logs = await getTodaysFoodLogs(uid);
+  return logs.reduce(
+    (acc, log) => ({
+      calories: acc.calories + (log.analysis?.totals?.calories || 0),
+      protein_g: acc.protein_g + (log.analysis?.totals?.protein_g || 0),
+      carbs_g: acc.carbs_g + (log.analysis?.totals?.carbs_g || 0),
+      fat_g: acc.fat_g + (log.analysis?.totals?.fat_g || 0),
+      fiber_g: acc.fiber_g + (log.analysis?.totals?.fiber_g || 0),
+    }),
+    { calories: 0, protein_g: 0, carbs_g: 0, fat_g: 0, fiber_g: 0 }
+  );
 }
 
 // Weekly calorie data
@@ -137,8 +149,7 @@ export async function getWeeklyCalories(uid: string) {
     );
     const snap = await getDocs(q);
     const total = snap.docs.reduce(
-      (sum, doc) => sum + (doc.data().analysis?.totals?.calories || 0),
-      0
+      (sum, doc) => sum + (doc.data().analysis?.totals?.calories || 0), 0
     );
     days.push({ date: dateStr, calories: total });
   }

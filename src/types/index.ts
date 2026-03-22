@@ -67,12 +67,20 @@ export interface AIGuidance {
   score: number;
 }
 
+export interface PlanAlignment {
+  matches_diet: boolean;
+  matches_workout_nutrition: boolean;
+  suggestions: string[];
+  remaining_today: { calories: number; protein_g: number; carbs_g: number; fat_g: number; };
+}
+
 export interface FoodAnalysisResult {
   success: boolean;
   userId: string;
   mealType: string;
   analysis: FoodAnalysis;
   ai_guidance: AIGuidance;
+  plan_alignment?: PlanAlignment;
   analyzed_at: string;
 }
 
@@ -85,7 +93,17 @@ export interface FoodLog {
   image_url?: string;
   analysis: FoodAnalysis;
   ai_guidance: AIGuidance;
+  plan_alignment?: PlanAlignment;
   logged_at: string;
+}
+
+export interface DietMeal {
+  name: string;
+  time: string;
+  items: { food: string; quantity: string; calories: number }[];
+  total_calories: number;
+  prep_time_min: number;
+  recipe_hint: string;
 }
 
 export interface DietPlanDay {
@@ -101,15 +119,6 @@ export interface DietPlanDay {
   day_total_calories: number;
 }
 
-export interface DietMeal {
-  name: string;
-  time: string;
-  items: { food: string; quantity: string; calories: number }[];
-  total_calories: number;
-  prep_time_min: number;
-  recipe_hint: string;
-}
-
 export interface DietPlan {
   id?: string;
   userId: string;
@@ -123,6 +132,8 @@ export interface DietPlan {
   supplements_recommended: string[];
   foods_to_avoid: string[];
   foods_to_emphasize: string[];
+  linked_workout_plan_id?: string;
+  source?: "standalone" | "auto_from_workout" | "modified";
   generated_at: string;
 }
 
@@ -133,9 +144,6 @@ export interface WorkoutExercise {
   reps: string;
   rest_seconds: number;
   form_tips: string;
-  common_mistakes: string;
-  beginner_modification: string;
-  advanced_progression: string;
   calories_burned_approx: number;
 }
 
@@ -160,5 +168,7 @@ export interface WorkoutPlan {
   nutrition_timing: string;
   recovery_tips: string;
   progression_plan: string;
+  linked_diet_plan_id?: string;
+  source?: "standalone" | "auto_from_diet" | "modified";
   generated_at: string;
 }

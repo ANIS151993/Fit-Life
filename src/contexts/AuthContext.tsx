@@ -1,20 +1,9 @@
 "use client";
+import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import {
-  createContext,
-  useContext,
-  useEffect,
-  useState,
-  ReactNode,
-} from "react";
-import {
-  User,
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signOut,
-  GoogleAuthProvider,
-  signInWithPopup,
-  updateProfile,
+  User, onAuthStateChanged, signInWithEmailAndPassword,
+  createUserWithEmailAndPassword, signOut, GoogleAuthProvider,
+  signInWithPopup, updateProfile,
 } from "firebase/auth";
 import { auth } from "@/lib/firebase";
 import { createUserProfile, getUserProfile } from "@/lib/firestore";
@@ -37,7 +26,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (u) => {
+    if (!auth) { Promise.resolve().then(() => setLoading(false)); return; }
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
       setLoading(false);
     });
@@ -53,10 +43,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const result = await createUserWithEmailAndPassword(auth, email, password);
     await updateProfile(result.user, { displayName: name });
     await createUserProfile(result.user.uid, {
-      uid: result.user.uid,
-      name,
-      email,
-      onboarding_complete: false,
+      uid: result.user.uid, name, email, onboarding_complete: false,
     });
     router.push("/onboarding");
   };
@@ -67,10 +54,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const profile = await getUserProfile(result.user.uid);
     if (!profile) {
       await createUserProfile(result.user.uid, {
-        uid: result.user.uid,
-        name: result.user.displayName || "",
-        email: result.user.email || "",
-        onboarding_complete: false,
+        uid: result.user.uid, name: result.user.displayName || "",
+        email: result.user.email || "", onboarding_complete: false,
       });
       router.push("/onboarding");
     } else {
@@ -84,9 +69,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider
-      value={{ user, loading, login, register, loginWithGoogle, logout }}
-    >
+    <AuthContext.Provider value={{ user, loading, login, register, loginWithGoogle, logout }}>
       {children}
     </AuthContext.Provider>
   );

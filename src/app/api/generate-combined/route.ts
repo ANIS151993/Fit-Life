@@ -1,3 +1,4 @@
+export const runtime = "edge";
 import { NextRequest, NextResponse } from "next/server";
 
 const WEBHOOK_SECRET = "fitlife_webhook_secret_2024";

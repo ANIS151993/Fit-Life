@@ -7,6 +7,8 @@ import toast from "react-hot-toast";
 import { Camera, Loader2, AlertTriangle, CheckCircle } from "lucide-react";
 import Image from "next/image";
 
+const N8N_FOOD = "https://n8n.marcbd.site/webhook/fitlife/analyze-food";
+
 export default function FoodLogPage() {
   const { user } = useAuth();
   const [logs, setLogs] = useState<FoodLog[]>([]);
@@ -49,9 +51,10 @@ export default function FoodLogPage() {
         r.readAsDataURL(file);
       });
 
-      toast.loading("Analyzing your meal with AI...", { id: "analyze" });
+      toast.loading("Analyzing your meal with AI... (1-3 min)", { id: "analyze" });
 
-      const res = await fetch("/api/analyze-food", {
+      // Call n8n directly from browser (bypasses Cloudflare edge 30s timeout)
+      const res = await fetch(N8N_FOOD, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -61,7 +64,14 @@ export default function FoodLogPage() {
         }),
       });
 
-      const data = await res.json();
+      const rawText = await res.text();
+      let data;
+      try {
+        const parsed = JSON.parse(rawText);
+        data = Array.isArray(parsed) ? parsed[0] : parsed;
+      } catch {
+        throw new Error("Failed to parse AI response");
+      }
 
       if (!data.success && !data.analysis) {
         throw new Error(data.error || "Analysis failed");
@@ -121,7 +131,6 @@ export default function FoodLogPage() {
         food_name: foodName,
         analysis: data.analysis,
         ai_guidance: data.ai_guidance,
-        plan_alignment: planAlignment,
         logged_at: new Date().toISOString(),
       });
 
@@ -181,7 +190,8 @@ export default function FoodLogPage() {
             {analyzing ? (
               <div className="flex flex-col items-center gap-3">
                 <Loader2 className="w-12 h-12 text-green-500 animate-spin" />
-                <p className="text-green-600 font-medium">Analyzing your meal...</p>
+                <p className="text-green-600 font-medium">Analyzing your meal with AI...</p>
+                <p className="text-xs text-gray-400">This may take 1-3 minutes on first analysis</p>
               </div>
             ) : preview ? (
               <div className="flex flex-col items-center gap-3">

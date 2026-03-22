@@ -1,3 +1,4 @@
+export const runtime = "edge";
 import { NextRequest, NextResponse } from "next/server";
 
 const DIET_WEBHOOK = "https://n8n.marcbd.site/webhook/fitlife/generate-diet";

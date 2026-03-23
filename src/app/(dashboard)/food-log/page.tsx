@@ -16,13 +16,16 @@ interface AnalysisResponse {
   plan_alignment?: { matches_diet: boolean; matches_workout_nutrition: boolean; suggestions: string[]; remaining_today: { calories: number; protein_g: number; carbs_g: number; fat_g: number } };
 }
 import toast from "react-hot-toast";
-import { Camera, Loader2, AlertTriangle, CheckCircle, Zap, Clock } from "lucide-react";
+import { Camera, Loader2, AlertTriangle, CheckCircle, Zap, Clock, Upload, Utensils, TrendingUp, Apple } from "lucide-react";
 import Image from "next/image";
+import { ProgressRing } from "@/components/ui/ProgressRing";
 
 const N8N_BASE = "https://n8n.marcbd.site/webhook";
 const N8N_FOOD_FAST = `${N8N_BASE}/fitlife/analyze-food-fast`;
 const N8N_FOOD_FREE = `${N8N_BASE}/fitlife/analyze-food`;
 const N8N_POLL = `${N8N_BASE}/fitlife/food-result`;
+
+const mealIcons: Record<string, string> = { breakfast: "🌅", lunch: "☀️", dinner: "🌙", snack: "🍎" };
 
 export default function FoodLogPage() {
   const { user } = useAuth();
@@ -105,7 +108,6 @@ export default function FoodLogPage() {
     toast.success("Meal analyzed and logged!", { id: "analyze" });
   }, [user, mealType, buildPlanAlignment]);
 
-  // Gemini (Fast) analysis - synchronous response
   const analyzeFast = useCallback(async () => {
     if (!user || !base64Image) return;
     setAnalyzing(true);
@@ -142,7 +144,6 @@ export default function FoodLogPage() {
     } finally { setAnalyzing(false); setAnalyzeStatus(""); }
   }, [user, base64Image, mealType, saveAndFinish]);
 
-  // Ollama (Free) analysis - async with polling
   const analyzeFree = useCallback(async () => {
     if (!user || !base64Image) return;
     setAnalyzing(true);
@@ -158,8 +159,6 @@ export default function FoodLogPage() {
       });
       if (!submitRes.ok) throw new Error("Failed to submit image");
       setAnalyzeStatus("Local AI is analyzing... (1-3 min)");
-
-      // Poll for result
       const data = await new Promise<AnalysisResponse>((resolve, reject) => {
         let attempts = 0;
         const maxAttempts = 60;
@@ -183,157 +182,273 @@ export default function FoodLogPage() {
   }, [user, base64Image, mealType, saveAndFinish]);
 
   const todayCalories = logs.reduce((s, l) => s + (l.analysis?.totals?.calories || 0), 0);
+  const todayProtein = logs.reduce((s, l) => s + (l.analysis?.totals?.protein_g || 0), 0);
+  const todayCarbs = logs.reduce((s, l) => s + (l.analysis?.totals?.carbs_g || 0), 0);
+  const todayFat = logs.reduce((s, l) => s + (l.analysis?.totals?.fat_g || 0), 0);
   const targetCalories = activeDiet?.daily_targets?.calories || 2000;
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">Log Meal</h1>
+      {/* Header */}
+      <div className="anim-fade-up">
+        <h1 className="text-2xl font-bold text-gray-900">Log Meal</h1>
+        <p className="text-sm text-gray-500 mt-1">Snap a photo for instant AI nutrition analysis</p>
+      </div>
 
-      <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex items-center justify-between">
-        <div>
-          <p className="text-sm text-gray-500">Today&apos;s calories</p>
-          <p className="text-2xl font-bold text-gray-900">{Math.round(todayCalories)} <span className="text-sm text-gray-400 font-normal">/ {targetCalories} kcal</span></p>
-        </div>
-        <div className="h-12 w-12">
-          <svg viewBox="0 0 36 36">
-            <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="#e5e7eb" strokeWidth="3" />
-            <path d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke={todayCalories > targetCalories ? "#ef4444" : "#16a34a"} strokeWidth="3" strokeDasharray={`${Math.min((todayCalories / targetCalories) * 100, 100)}, 100`} />
-          </svg>
+      {/* Today's Progress Bar */}
+      <div className="anim-fade-up anim-d1 glass rounded-2xl p-5">
+        <div className="flex items-center gap-5">
+          <ProgressRing value={todayCalories} max={targetCalories} size={80} strokeWidth={7} label={`${Math.round(todayCalories)}`} sublabel="kcal" />
+          <div className="flex-1 space-y-2">
+            <div className="flex justify-between text-sm">
+              <span className="text-gray-600 font-medium">Daily Progress</span>
+              <span className="font-semibold text-gray-900">{Math.round(todayCalories)} / {targetCalories} kcal</span>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: "Protein", value: todayProtein, color: "bg-macro-protein" },
+                { label: "Carbs", value: todayCarbs, color: "bg-macro-carbs" },
+                { label: "Fat", value: todayFat, color: "bg-macro-fat" },
+              ].map(m => (
+                <div key={m.label} className="text-center">
+                  <p className="text-xs text-gray-500">{m.label}</p>
+                  <p className="text-sm font-bold text-gray-800">{Math.round(m.value)}g</p>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">Meal Type</label>
-          <div className="flex gap-2">
-            {(["breakfast", "lunch", "dinner", "snack"] as const).map((t) => (
-              <button key={t} onClick={() => setMealType(t)}
-                className={`px-4 py-2 rounded-xl text-sm font-medium capitalize transition-colors ${mealType === t ? "bg-green-600 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"}`}>
-                {t}
-              </button>
-            ))}
-          </div>
+      {/* Meal Type Selector */}
+      <div className="anim-fade-up anim-d2">
+        <label className="block text-sm font-semibold text-gray-700 mb-2">Meal Type</label>
+        <div className="flex gap-2">
+          {(["breakfast", "lunch", "dinner", "snack"] as const).map((t) => (
+            <button key={t} onClick={() => setMealType(t)}
+              className={`flex-1 py-3 rounded-xl text-sm font-medium capitalize transition-all flex flex-col items-center gap-1 ${
+                mealType === t
+                  ? "bg-gradient-to-b from-brand-500 to-brand-600 text-white shadow-md shadow-brand-500/25 scale-[1.02]"
+                  : "glass text-gray-600 hover:bg-white/80"
+              }`}>
+              <span className="text-lg">{mealIcons[t]}</span>
+              <span>{t}</span>
+            </button>
+          ))}
         </div>
+      </div>
 
-        <label className="block cursor-pointer">
-          <div className={`border-2 border-dashed rounded-2xl p-8 text-center transition-colors ${analyzing ? "border-green-300 bg-green-50" : "border-gray-200 hover:border-green-400 hover:bg-green-50"}`}>
+      {/* Image Upload Zone */}
+      <div className="anim-fade-up anim-d3">
+        <label className="block cursor-pointer group">
+          <div className={`rounded-2xl overflow-hidden transition-all duration-300 ${
+            analyzing
+              ? "border-2 border-brand-400 bg-brand-50/50 shadow-lg shadow-brand-500/10"
+              : preview
+                ? "border-2 border-brand-200 bg-white shadow-sm"
+                : "border-2 border-dashed border-gray-200 glass hover:border-brand-400 hover:shadow-md hover:shadow-brand-500/5"
+          }`}>
             {analyzing ? (
-              <div className="flex flex-col items-center gap-3">
-                <Loader2 className="w-12 h-12 text-green-500 animate-spin" />
-                <p className="text-green-600 font-medium">{analyzeStatus || "Analyzing..."}</p>
+              <div className="flex flex-col items-center gap-4 py-12">
+                <div className="relative">
+                  <div className="w-16 h-16 rounded-full border-4 border-brand-200 border-t-brand-500 animate-spin" />
+                  <Utensils className="w-6 h-6 text-brand-600 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
+                </div>
+                <div className="text-center">
+                  <p className="text-brand-700 font-semibold">{analyzeStatus || "Analyzing..."}</p>
+                  <div className="mt-3 flex gap-1 justify-center">
+                    {[0,1,2,3,4].map(i => (
+                      <div key={i} className="w-2 h-2 rounded-full bg-brand-400 animate-pulse" style={{ animationDelay: `${i * 200}ms` }} />
+                    ))}
+                  </div>
+                </div>
               </div>
             ) : preview ? (
-              <div className="flex flex-col items-center gap-3">
-                <Image src={preview} alt="Meal preview" width={192} height={192} className="w-48 h-48 object-cover rounded-xl" />
-                <p className="text-sm text-gray-500">Tap to change photo</p>
+              <div className="relative">
+                <Image src={preview} alt="Meal preview" width={600} height={400}
+                  className="w-full h-64 object-cover" />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent flex items-end p-4">
+                  <p className="text-white/80 text-sm font-medium">Tap to change photo</p>
+                </div>
               </div>
             ) : (
-              <div className="flex flex-col items-center gap-3">
-                <Camera className="w-12 h-12 text-gray-300" />
-                <p className="text-gray-500 font-medium">Take or upload a photo of your meal</p>
-                <p className="text-xs text-gray-400">Then choose Quick or Free analysis below</p>
+              <div className="flex flex-col items-center gap-4 py-12 px-6">
+                <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-brand-100 to-emerald-100 flex items-center justify-center group-hover:scale-110 transition-transform duration-300">
+                  <Camera className="w-10 h-10 text-brand-500" />
+                </div>
+                <div className="text-center">
+                  <p className="text-gray-700 font-semibold">Take or upload a meal photo</p>
+                  <p className="text-sm text-gray-400 mt-1">Our AI will analyze calories, macros, and vitamins</p>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-gray-400">
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>JPG, PNG, HEIC supported</span>
+                </div>
               </div>
             )}
           </div>
           <input type="file" accept="image/*" capture="environment" onChange={handleImageSelect} className="hidden" disabled={analyzing} />
         </label>
-
-        {imageReady && !analyzing && !result && (
-          <div className="grid grid-cols-2 gap-3">
-            <button onClick={analyzeFast}
-              className="py-4 bg-gradient-to-r from-purple-600 to-blue-600 text-white rounded-2xl font-semibold hover:from-purple-700 hover:to-blue-700 transition-all flex flex-col items-center gap-1 shadow-lg">
-              <Zap className="w-6 h-6" />
-              <span>Quick Analysis</span>
-              <span className="text-xs opacity-80">Gemini AI ~ 10s</span>
-            </button>
-            <button onClick={analyzeFree}
-              className="py-4 bg-gradient-to-r from-green-600 to-emerald-600 text-white rounded-2xl font-semibold hover:from-green-700 hover:to-emerald-700 transition-all flex flex-col items-center gap-1 shadow-lg">
-              <Clock className="w-6 h-6" />
-              <span>Free Analysis</span>
-              <span className="text-xs opacity-80">Local AI ~ 1-3 min</span>
-            </button>
-          </div>
-        )}
       </div>
 
+      {/* Analysis Buttons */}
+      {imageReady && !analyzing && !result && (
+        <div className="grid grid-cols-2 gap-3 anim-fade-up">
+          <button onClick={analyzeFast}
+            className="relative py-5 bg-gradient-to-br from-violet-600 via-purple-600 to-blue-600 text-white rounded-2xl font-semibold transition-all hover:shadow-xl hover:shadow-purple-500/25 hover:scale-[1.02] active:scale-[0.98] overflow-hidden">
+            <div className="absolute inset-0 bg-[linear-gradient(45deg,transparent_25%,rgba(255,255,255,0.1)_50%,transparent_75%)] bg-[length:250%_250%] animate-[shimmer_3s_infinite]" />
+            <div className="relative flex flex-col items-center gap-1.5">
+              <Zap className="w-7 h-7" />
+              <span className="text-base">Quick Analysis</span>
+              <span className="text-xs opacity-75">Gemini AI ~ 10-20s</span>
+            </div>
+          </button>
+          <button onClick={analyzeFree}
+            className="relative py-5 bg-gradient-to-br from-brand-600 via-emerald-600 to-teal-600 text-white rounded-2xl font-semibold transition-all hover:shadow-xl hover:shadow-emerald-500/25 hover:scale-[1.02] active:scale-[0.98] overflow-hidden">
+            <div className="absolute inset-0 bg-[linear-gradient(45deg,transparent_25%,rgba(255,255,255,0.1)_50%,transparent_75%)] bg-[length:250%_250%] animate-[shimmer_3s_infinite]" />
+            <div className="relative flex flex-col items-center gap-1.5">
+              <Clock className="w-7 h-7" />
+              <span className="text-base">Free Analysis</span>
+              <span className="text-xs opacity-75">Local AI ~ 1-3 min</span>
+            </div>
+          </button>
+        </div>
+      )}
+
+      {/* Analysis Result */}
       {result && result.analysis && (
-        <div className="space-y-3">
+        <div className="space-y-4 anim-fade-up">
+          {/* AI Guidance Card */}
           {result.ai_guidance && (
-            <div className={`rounded-2xl p-4 border ${
-              result.ai_guidance.color === "green" ? "bg-green-50 border-green-200" :
-              result.ai_guidance.color === "yellow" ? "bg-yellow-50 border-yellow-200" :
-              result.ai_guidance.color === "orange" ? "bg-orange-50 border-orange-200" : "bg-red-50 border-red-200"
+            <div className={`rounded-2xl p-5 border transition-all ${
+              result.ai_guidance.color === "green" ? "bg-gradient-to-r from-green-50 to-emerald-50 border-green-200" :
+              result.ai_guidance.color === "yellow" ? "bg-gradient-to-r from-yellow-50 to-amber-50 border-yellow-200" :
+              result.ai_guidance.color === "orange" ? "bg-gradient-to-r from-orange-50 to-amber-50 border-orange-200" :
+              "bg-gradient-to-r from-red-50 to-rose-50 border-red-200"
             }`}>
-              <div className="flex items-start gap-3">
-                {result.ai_guidance.score >= 6 ? <CheckCircle className="w-5 h-5 text-green-500 mt-0.5" /> : <AlertTriangle className="w-5 h-5 text-orange-500 mt-0.5" />}
+              <div className="flex items-start gap-4">
+                <div className={`w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                  result.ai_guidance.score >= 6
+                    ? "bg-green-100 text-green-600"
+                    : "bg-orange-100 text-orange-600"
+                }`}>
+                  {result.ai_guidance.score >= 6 ? <CheckCircle className="w-6 h-6" /> : <AlertTriangle className="w-6 h-6" />}
+                </div>
                 <div>
-                  <p className="font-medium text-gray-900">Score: {result.ai_guidance.score}/10</p>
-                  <p className="text-sm text-gray-700 mt-1">{result.ai_guidance.message}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="font-bold text-gray-900">Quality Score</p>
+                    <span className={`text-lg font-extrabold ${
+                      result.ai_guidance.score >= 7 ? "text-green-600" : result.ai_guidance.score >= 5 ? "text-yellow-600" : "text-red-600"
+                    }`}>{result.ai_guidance.score}/10</span>
+                  </div>
+                  <p className="text-sm text-gray-700 mt-1 leading-relaxed">{result.ai_guidance.message}</p>
                 </div>
               </div>
             </div>
           )}
 
+          {/* Plan Alignment */}
           {result.plan_alignment && result.plan_alignment.suggestions.length > 0 && (
-            <div className="bg-blue-50 rounded-2xl p-4 border border-blue-200">
-              <p className="font-medium text-blue-800 mb-2">Plan Alignment</p>
-              {result.plan_alignment.suggestions.map((s: string, i: number) => (
-                <p key={i} className="text-sm text-blue-700">- {s}</p>
-              ))}
+            <div className="rounded-2xl p-5 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200">
+              <div className="flex items-center gap-2 mb-3">
+                <TrendingUp className="w-5 h-5 text-blue-600" />
+                <p className="font-bold text-blue-900">Plan Alignment</p>
+              </div>
+              <div className="space-y-1.5">
+                {result.plan_alignment.suggestions.map((s: string, i: number) => (
+                  <p key={i} className="text-sm text-blue-800 flex items-start gap-2">
+                    <span className="text-blue-400 mt-0.5">&#8226;</span>{s}
+                  </p>
+                ))}
+              </div>
               {result.plan_alignment.remaining_today && (
-                <div className="mt-3 flex gap-3 text-xs text-blue-600">
-                  <span>Remaining: {Math.round(result.plan_alignment.remaining_today.calories)} kcal</span>
-                  <span>{Math.round(result.plan_alignment.remaining_today.protein_g)}g P</span>
-                  <span>{Math.round(result.plan_alignment.remaining_today.carbs_g)}g C</span>
-                  <span>{Math.round(result.plan_alignment.remaining_today.fat_g)}g F</span>
+                <div className="mt-4 pt-3 border-t border-blue-200/60 grid grid-cols-4 gap-2">
+                  {[
+                    { l: "Calories", v: result.plan_alignment.remaining_today.calories, u: "kcal" },
+                    { l: "Protein", v: result.plan_alignment.remaining_today.protein_g, u: "g" },
+                    { l: "Carbs", v: result.plan_alignment.remaining_today.carbs_g, u: "g" },
+                    { l: "Fat", v: result.plan_alignment.remaining_today.fat_g, u: "g" },
+                  ].map(r => (
+                    <div key={r.l} className="text-center">
+                      <p className="text-xs text-blue-500">{r.l} left</p>
+                      <p className="text-sm font-bold text-blue-800">{Math.round(r.v)}{r.u}</p>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
           )}
 
-          <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-            <h3 className="font-semibold text-gray-900 mb-3">Nutrition Breakdown</h3>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          {/* Nutrition Breakdown */}
+          <div className="glass rounded-2xl p-6">
+            <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
+              <Apple className="w-5 h-5 text-brand-500" />
+              Nutrition Breakdown
+            </h3>
+            <div className="grid grid-cols-5 gap-2">
               {[
-                { label: "Calories", value: result.analysis.totals?.calories, unit: "kcal", color: "text-green-600" },
-                { label: "Protein", value: result.analysis.totals?.protein_g, unit: "g", color: "text-blue-600" },
-                { label: "Carbs", value: result.analysis.totals?.carbs_g, unit: "g", color: "text-orange-500" },
-                { label: "Fat", value: result.analysis.totals?.fat_g, unit: "g", color: "text-yellow-500" },
-                { label: "Fiber", value: result.analysis.totals?.fiber_g, unit: "g", color: "text-purple-500" },
+                { label: "Calories", value: result.analysis.totals?.calories, unit: "kcal", from: "from-emerald-400", to: "to-green-500" },
+                { label: "Protein", value: result.analysis.totals?.protein_g, unit: "g", from: "from-blue-400", to: "to-blue-500" },
+                { label: "Carbs", value: result.analysis.totals?.carbs_g, unit: "g", from: "from-amber-400", to: "to-orange-500" },
+                { label: "Fat", value: result.analysis.totals?.fat_g, unit: "g", from: "from-rose-400", to: "to-red-500" },
+                { label: "Fiber", value: result.analysis.totals?.fiber_g, unit: "g", from: "from-violet-400", to: "to-purple-500" },
               ].map((n) => (
-                <div key={n.label} className="text-center p-3 bg-gray-50 rounded-xl">
-                  <p className={`text-xl font-bold ${n.color}`}>{Math.round(n.value || 0)}</p>
-                  <p className="text-xs text-gray-400">{n.unit} {n.label}</p>
+                <div key={n.label} className="text-center p-3 rounded-xl bg-gray-50/80 hover:bg-white transition-colors">
+                  <p className={`text-xl font-extrabold bg-gradient-to-br ${n.from} ${n.to} bg-clip-text text-transparent`}>
+                    {Math.round(n.value || 0)}
+                  </p>
+                  <p className="text-[10px] text-gray-400 uppercase tracking-wider mt-0.5">{n.unit}</p>
+                  <p className="text-xs text-gray-500 font-medium">{n.label}</p>
                 </div>
               ))}
             </div>
             {result.analysis.food_items && result.analysis.food_items.length > 0 && (
-              <div className="mt-4">
-                <p className="text-sm font-medium text-gray-700 mb-2">Detected Items</p>
-                {result.analysis.food_items.map((item: { name: string; quantity_g: number; calories: number }, i: number) => (
-                  <div key={i} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
-                    <span className="text-sm text-gray-700">{item.name} ({item.quantity_g}g)</span>
-                    <span className="text-sm text-gray-500">{item.calories} kcal</span>
-                  </div>
-                ))}
+              <div className="mt-5 pt-4 border-t border-gray-100">
+                <p className="text-sm font-semibold text-gray-700 mb-3">Detected Items</p>
+                <div className="space-y-2">
+                  {result.analysis.food_items.map((item: { name: string; quantity_g: number; calories: number }, i: number) => (
+                    <div key={i} className="flex items-center justify-between py-2.5 px-3 rounded-xl hover:bg-gray-50/80 transition-colors">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-brand-100/50 flex items-center justify-center text-brand-600 text-sm font-bold">
+                          {i + 1}
+                        </div>
+                        <div>
+                          <span className="text-sm font-medium text-gray-800">{item.name}</span>
+                          <span className="text-xs text-gray-400 ml-2">{item.quantity_g}g</span>
+                        </div>
+                      </div>
+                      <span className="text-sm font-semibold text-gray-600">{item.calories} kcal</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
         </div>
       )}
 
+      {/* Today's Meals */}
       {logs.length > 0 && (
-        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-          <h3 className="font-semibold text-gray-900 mb-3">Today&apos;s Meals ({logs.length})</h3>
+        <div className="anim-fade-up anim-d4 glass rounded-2xl p-6">
+          <h3 className="font-bold text-gray-900 mb-4">Today&apos;s Meals <span className="text-sm font-normal text-gray-400">({logs.length})</span></h3>
           <div className="space-y-2">
             {logs.map((log) => (
-              <div key={log.id} className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl">
-                <div className={`w-3 h-3 rounded-full flex-shrink-0 ${log.mealType === "breakfast" ? "bg-blue-400" : log.mealType === "lunch" ? "bg-green-400" : log.mealType === "dinner" ? "bg-purple-400" : "bg-orange-400"}`} />
+              <div key={log.id} className="flex items-center gap-3 p-3 rounded-xl hover:bg-white/60 transition-colors group">
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg flex-shrink-0 ${
+                  log.mealType === "breakfast" ? "bg-blue-100" :
+                  log.mealType === "lunch" ? "bg-green-100" :
+                  log.mealType === "dinner" ? "bg-purple-100" : "bg-orange-100"
+                }`}>
+                  {mealIcons[log.mealType] || "🍽️"}
+                </div>
                 <div className="flex-1 min-w-0">
                   <p className="font-medium text-gray-900 truncate">{log.food_name}</p>
-                  <p className="text-xs text-gray-400 capitalize">{log.mealType}</p>
+                  <p className="text-xs text-gray-400 capitalize">{log.mealType} &middot; {new Date(log.logged_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</p>
                 </div>
-                <p className="font-semibold text-gray-900 flex-shrink-0">{Math.round(log.analysis?.totals?.calories || 0)} kcal</p>
+                <div className="text-right flex-shrink-0">
+                  <p className="font-bold text-gray-900">{Math.round(log.analysis?.totals?.calories || 0)}</p>
+                  <p className="text-xs text-gray-400">kcal</p>
+                </div>
               </div>
             ))}
           </div>

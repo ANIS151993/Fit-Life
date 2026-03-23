@@ -256,6 +256,14 @@ export default function DietPlanPage() {
           {plan.foods_to_avoid && plan.foods_to_avoid.length > 0 && <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100"><p className="text-sm font-semibold text-gray-800 mb-2">Foods to Avoid</p><div className="flex flex-wrap gap-2">{plan.foods_to_avoid.map((f:string,i:number)=><span key={i} className="px-3 py-1 bg-red-100 text-red-700 rounded-full text-xs">{f}</span>)}</div></div>}
         </div>
       )}
+      {plan && (!plan.days || plan.days.length === 0) && (
+          <div className="bg-yellow-50 rounded-2xl p-4 border border-yellow-200">
+            <p className="font-medium text-yellow-800">Diet plan generated but meal details could not be fully structured.</p>
+            <p className="text-sm text-yellow-700 mt-1">Try the Quick Plan (Gemini) for a detailed 7-day meal plan.</p>
+            {plan.nutritionist_notes && <p className="text-sm text-yellow-700 mt-2 whitespace-pre-line">{plan.nutritionist_notes}</p>}
+            <button onClick={() => setShowForm(true)} className="mt-3 px-4 py-2 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700">Generate New Plan</button>
+          </div>
+      )}
       {!plan && !showForm && <div className="text-center py-12"><BookOpen className="w-16 h-16 mx-auto text-gray-300 mb-4" /><p className="text-gray-500">No diet plan yet</p><button onClick={() => setShowForm(true)} className="mt-4 px-6 py-2 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700">Create Your First Plan</button></div>}
     </div>
   );

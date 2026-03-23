@@ -272,6 +272,16 @@ export default function WorkoutsPage() {
           {plan.nutrition_timing && <div className="bg-green-50 rounded-2xl p-4 border border-green-100"><p className="text-sm font-semibold text-green-800 mb-1">Nutrition Timing</p><p className="text-sm text-green-700">{plan.nutrition_timing}</p></div>}
         </div>
       )}
+      {plan && (!plan.weekly_schedule || plan.weekly_schedule.length === 0) && (
+        <div className="space-y-3">
+          <div className="bg-yellow-50 rounded-2xl p-4 border border-yellow-200">
+            <p className="font-medium text-yellow-800">Workout plan generated but exercises could not be fully structured.</p>
+            <p className="text-sm text-yellow-700 mt-1">Try the Quick Plan (Gemini) for a more detailed workout.</p>
+          </div>
+          {plan.trainer_notes && <div className="bg-blue-50 rounded-2xl p-4 border border-blue-100"><p className="text-sm font-semibold text-blue-800 mb-1">AI Trainer Notes</p><p className="text-sm text-blue-700 whitespace-pre-line">{plan.trainer_notes}</p></div>}
+          <button onClick={() => setShowForm(true)} className="w-full py-3 bg-green-600 text-white rounded-xl font-medium hover:bg-green-700">Generate New Plan</button>
+        </div>
+      )}
       {!plan && !showForm && (
         <div className="text-center py-12"><Dumbbell className="w-16 h-16 mx-auto text-gray-300 mb-4" /><p className="text-gray-500">No workout plan yet</p><button onClick={() => setShowForm(true)} className="mt-4 px-6 py-2 bg-green-600 text-white rounded-xl text-sm font-medium hover:bg-green-700">Create Your First Plan</button></div>
       )}

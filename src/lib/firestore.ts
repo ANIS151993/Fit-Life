@@ -39,22 +39,26 @@ export async function getTodaysFoodLogs(uid: string) {
   const today = new Date().toISOString().split("T")[0];
   const q = query(
     collection(db, "users", uid, "food_logs"),
-    where("date", "==", today),
-    orderBy("logged_at", "desc")
+    where("date", "==", today)
   );
   const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }) as FoodLog);
+  // Sort in-memory by logged_at descending (avoids composite index requirement)
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }) as FoodLog)
+    .sort((a, b) => (b.logged_at || "").localeCompare(a.logged_at || ""));
 }
 
 export function subscribeTodaysFoodLogs(uid: string, callback: (logs: FoodLog[]) => void) {
   const today = new Date().toISOString().split("T")[0];
   const q = query(
     collection(db, "users", uid, "food_logs"),
-    where("date", "==", today),
-    orderBy("logged_at", "desc")
+    where("date", "==", today)
   );
   return onSnapshot(q, (snap) => {
-    callback(snap.docs.map((d) => ({ id: d.id, ...d.data() }) as FoodLog));
+    const logs = snap.docs
+      .map((d) => ({ id: d.id, ...d.data() }) as FoodLog)
+      .sort((a, b) => (b.logged_at || "").localeCompare(a.logged_at || ""));
+    callback(logs);
   });
 }
 
@@ -105,7 +109,6 @@ export async function saveLinkedPlans(
     ...dietPlan,
     linked_workout_plan_id: workoutId,
   });
-  // Update workout with linked diet ID
   await updateDoc(doc(db, "users", uid, "workout_plans", workoutId), {
     linked_diet_plan_id: dietId,
   });
